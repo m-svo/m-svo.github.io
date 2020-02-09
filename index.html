@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+  <meta charset="UTF-8">
+  <meta name="keywords" content="LXD, LXC, Pi-hole, container, guide">
+  <meta name="description" content="Guide on running Pi-hole in a container">
+  <title>GNU/Linux tips and tricks</title>
+  <link rel="shortcut icon" href="favicon.png">
+  <link rel="stylesheet" href="style.css" type="text/css">
+</head>
+
+<body>
+
+<h1>Running Pi-hole in LXD container</h1>
+
+<p>This guide was originally written for those who:</br>
+a) would like to try Pi-hole Network-wide Ad Blocking locally before 
+    buying a hardware</br>
+b) would like to use Pi-hole locally, only on one device</p>
+
+<p>Later I decided that Pi-hole fits nice with LXD container, and added UFW 
+    configuration to allow requests from all clients.</p>
+
+<p>What do we gain here from using 
+    <url=https://linuxcontainers.org/lxd/introduction/>LXD</url> container?</br>
+This allows Pi-hole web-interface on port 80 to coexist with any existing 
+    web-app on host, increases security for web-interface open to Internet, 
+    and simplifies deletion when testing is over.</p>
+
+<h2>Installing LXD and Pi-hole</h2>
+
+<p>First, install LXD</br>
+v. 3.0 LTS release, Ubuntu 18.04</br>
+<code>sudo apt install lxd</code>
+or</br>
+v. 3.18 or newer (feature releases), Ubuntu 18.04 and newer, Debian 10, 
+    Arch Linux, or any other Linux that supports snaps</br>
+<code>sudo snap install lxd</code></p>
+
+<p>Do first time setup. Default answers are fine.</br>
+<code>lxd init</code></p>
+
+<p>From now on, use <b>lxc</b> command.</br>
+Create and start an Ubuntu 18.04 container named <i>pihole</i></br>
+<code>lxc launch ubuntu:18.04 pihole</code></p>
+
+<p>Check that it started succesfully and has an IP</br>
+<code>lxc list</code></p>
+
+<p>Log into container, set the correct timezone</br>
+<code>
+lxc exec pihole -- /bin/bash</br>
+dpkg-reconfigure tzdata
+</code>
+and install Pi-hole using <a 
+href="https://github.com/pi-hole/pi-hole/#one-step-automated-install" 
+target="_blank">the official guide</a>.</p>
+
+<p>Save the password shown by installer.</br>
+Log out: Ctrl + D</p>
+
+<p>Tell the system to use the Pi-hole container as new DNS<color=red>*</color></br>
+Go to internet connection settings and set container IP as DNS.</br>
+You can look up the IP:</br>
+<code>lxc list</code></p>
+
+<p>Restart your browser and open any website, then open Pi-hole admin page (it is 
+    on the same IP as DNS), log in and see your browser`s request in Query Log.</p>
+
+<h2>Optional: Allow connections from your network to container</h2>
+
+<p>Use UFW to allow connections to Pi-hole from other devices.</br>
+Source: <a href="https://gist.github.com/kimus/9315140" target="_blank">
+    https://gist.github.com/kimus/9315140</a></p>
+
+<p>Edit <quote>/etc/default/ufw</quote> :</br>
+<code>DEFAULT_FORWARD_POLICY="ACCEPT"</code></p>
+
+<p>Edit <quote>/etc/ufw/sysctl.conf</quote> :</br>
+<code>net.ipv4.ip_forward=1</code></p>
+
+<p>Add the following to <quote>/etc/ufw/before.rules</quote> just before the filter 
+    rules, be sure to replace <i>wlp1s0</i> with your network interface and 
+    <i>10.81.65.206</i> with your container IP, <i>192.168.1.45</i> with your host IP.</br>
+<code>
+<pre>
+# NAT table rules
+*nat
+:PREROUTING ACCEPT [0:0]
+:POSTROUTING ACCEPT [0:0]
+
+# Port Forwardings
+-A PREROUTING -i wlp1s0 -p tcp --dport 80 -j DNAT --to-destination 10.81.65.206
+-A PREROUTING -i wlp1s0 -p tcp --dport 53 -j DNAT --to-destination 10.81.65.206
+-A PREROUTING -i wlp1s0 -p udp --dport 53 -j DNAT --to-destination 10.81.65.206
+
+# Allow access by local IP via wlp1s0 - change to match you out-interface
+-A POSTROUTING -s 192.168.1.0/24 -o wlp1s0 -j SNAT --to-source 192.168.1.45
+-A OUTPUT -d 192.168.1.45 -p tcp --dport 80 -j DNAT --to-destination 10.81.65.206
+
+# don't delete the 'COMMIT' line or these nat table rules won't
+# be processed
+COMMIT
+</pre>
+</code></p>
+
+<p>Enable changes by rebooting the host machine</p>
+
+<p>You can now use Pi-hole in your network.</p>
+
+<h2>Removing container</h2>
+
+<p>Roll back whatever changes you did to network connection and UFW.</br>
+Stop and delete container:</br>
+<code>
+lxc stop pihole</br>
+lxc delete pihole</br>
+</code>
+Optionally delete LXD</br>
+<code>
+sudo apt purge lxd</br>
+</code>
+or
+<code>
+sudo snap remove lxd
+</code></p>
+
+<h3>Tips</h3>
+
+<p><size=1.5em>*</size> You can also set DNS for all internet 
+    connections.</br>
+Here is the how-to for NetworkManager.</br>
+Edit <quote>/etc/NetworkManager/NetworkManager.conf</quote></br>
+Add:</br>
+<code>
+&lt;main&gt;</br>
+dns=none</br>
+</code></p>
+
+<p>This will instruct NetworkManager to not make any changes to 
+    <quote>/etc/resolv.conf</quote></br>
+Restart NetworkManager</br>
+<code>sudo systemctl restart NetworkManager</code>
+
+<p>Now edit <quote>/etc/resolv.conf</quote></br>
+Delete everything, and put only:</br>
+<code>nameserver <i>your-container-ip</i></code></p>
+
+<table class=links width=50%>
+        <tr>
+            <td><a rel="me" href="https://mastodon.social/@m_svo">me @ Mastodon</a></td>
+            <td><a href="https://github.com/m-svo" target="_self">Github profile is here</a></td>
+        </tr>
+    </table>
+
+</body>
+</html>
